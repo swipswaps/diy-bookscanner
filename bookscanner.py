@@ -5,7 +5,7 @@
 # Copyright 2013 Ben Steinberg <benjamin_steinberg@harvard.edu>
 # Harvard Library, Office for Scholarly Communication
 
-# derived from 
+# derived from
 # https://raw.github.com/markvdb/diybookscanner/master/misc/test_keypedal.sh
 # by Mark Van den Borre <mark@markvdb.be>
 
@@ -19,89 +19,110 @@
 from time import time, sleep
 import sys
 from datetime import datetime
-from subprocess import Popen, PIPE
-from os import makedirs, chdir, utime, chmod, walk, chown, execl
-from os.path import join
-import RPi.GPIO as GPIO
+import subprocess
+import os
 import re
 import usb # 1.0, cloned from git://github.com/walac/pyusb.git -- Debian has 0.4.x
-import lcd
+import termios
+import fcntl
+import termcolor
+import contextlib
+import math
+import exif_date
+import glob
 
-PTPCAM =        '/usr/local/bin/ptpcam'
-TMOUT =         15
-PIN =           18
+
+PTPCAM =        '/usr/bin/ptpcam'
 SHOTS =         0
 
 SHORTPAUSE =    0.5
 PAUSE =         3
 LONGPAUSE =     5
-DEBOUNCEPAUSE = 0.05
 
 DLFACTOR =      1.5 # multiplier for download time
 SCANDIRPREFIX = '/home/pi/public_html/bookscan_'
 CANON =         1193 # decimal from hex value from lsusb or http://www.pcidatabase.com/vendors.php
 BRAND =         CANON
-SHOTPARAMS =    'set_iso_real(100) ; set_av96(384) ; shoot()' # change exposure here
+SHOTPARAMS =    'set_iso_real(100) ; set_av96(384)' # change exposure here
 
-MARQUEETEXT =   'SSID: bookscanner -- http://192.168.7.1/'
 
-def marquee_generator(string):
-    padding = " " * 15
-    long_string = padding + string + padding
-    length = len(long_string)
-    divisor = len(padding) + len(string)
-    counter = 0
-    while (True):
-        i = length % divisor
-        if counter % 5 == 0:
-            length += 1
-        counter += 1
-        yield long_string[i:i+20]
+## quiet print
+def qprint(string):
+    termcolor.cprint(string, 'grey', attrs=['bold'])
 
-marquee = marquee_generator(MARQUEETEXT)
+## bright print
+def bprint(string):
+    termcolor.cprint(string, 'white', attrs=['bold'])
 
-def main():
-    lcd.clear()
+## error print
+def eprint(string):
+    termcolor.cprint(string, 'red')
 
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(PIN, GPIO.IN)
 
-    outer_loop()    
+## from http://stackoverflow.com/a/7259460/117088
+## which is from http://love-python.blogspot.com/2010/03/getch-in-python-get-single-character.html
+def getch():
+  fd = sys.stdin.fileno()
+
+  oldterm = termios.tcgetattr(fd)
+  newattr = termios.tcgetattr(fd)
+  newattr[3] = newattr[3] & ~termios.ICANON & ~termios.ECHO
+  termios.tcsetattr(fd, termios.TCSANOW, newattr)
+
+  oldflags = fcntl.fcntl(fd, fcntl.F_GETFL)
+  fcntl.fcntl(fd, fcntl.F_SETFL, oldflags | os.O_NONBLOCK)
+
+  try:
+    while 1:
+      try:
+        c = sys.stdin.read(1)
+        break
+      except IOError: pass
+  finally:
+    termios.tcsetattr(fd, termios.TCSAFLUSH, oldterm)
+    fcntl.fcntl(fd, fcntl.F_SETFL, oldflags)
+  return c
+
+
+def restart_cams():
+    qprint("Shutting down cameras to ensure stability...")
+    for cam in LEFTCAM, RIGHTCAM:
+        qprint("Shutting down " + cam + "...")
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua shut_down()'")
 
 def restart_program():
     # from http://www.daniweb.com/software-development/python/code/260268/restart-your-python-program
     python = sys.executable
-    execl(python, python, * sys.argv)
+    os.execl(python, python, * sys.argv)
 
 def cmdoutput(cmd):
-    p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = p.communicate()
     return out.rstrip()
 
 def detect_cams():
-    lcd.display(4, "detecting cameras...", 1)
+    qprint("detecting cameras...")
     global LEFTCAM, RIGHTCAM, LEFTCAMLONG, RIGHTCAMLONG, GPHOTOCAM1, GPHOTOCAM2
     #CAMS = cmdoutput("gphoto2 --auto-detect|grep usb| wc -l")
     CAMS = camera_count(BRAND)
     if CAMS == 2:
         GPHOTOCAM1 = cmdoutput("gphoto2 --auto-detect|grep usb|sed -e 's/.*Camera *//g'|head -n1")
         GPHOTOCAM2 = cmdoutput("gphoto2 --auto-detect|grep usb|sed -e 's/.*Camera *//g'|tail -n1")
-        print GPHOTOCAM1, "is gphotocam1"
-        print GPHOTOCAM2, "is gphotocam2"
-    
+        qprint(GPHOTOCAM1 + " is gphotocam1")
+        qprint(GPHOTOCAM2 + " is gphotocam2")
+
         GPHOTOCAM1ORIENTATION=cmdoutput("gphoto2 --port " + GPHOTOCAM1 + " --get-config /main/settings/ownername|grep Current|sed -e's/.*\ //'")
         GPHOTOCAM2ORIENTATION=cmdoutput("gphoto2 --port " + GPHOTOCAM2 + " --get-config /main/settings/ownername|grep Current|sed -e's/.*\ //'")
-        print "gphotocam1orientation is", GPHOTOCAM1ORIENTATION
-        print "gphotocam2orientation is", GPHOTOCAM2ORIENTATION
+        qprint("gphotocam1 orientation is " + GPHOTOCAM1ORIENTATION)
+        qprint("gphotocam2 orientation is " + GPHOTOCAM2ORIENTATION)
 
         CAM1=cmdoutput("echo " + GPHOTOCAM1 + "|sed -e 's/.*,//g'")
         CAM2=cmdoutput("echo " + GPHOTOCAM2 + "|sed -e 's/.*,//g'")
-        print "Detected 2 camera devices:", GPHOTOCAM1, "and", GPHOTOCAM2
-    else: 
-        print "Number of camera devices does not equal 2. Giving up."
-        lcd.display(4, "", 1)
-        lcd.display(2, "CAMERAS OFF.", 1)
-        lcd.display(3, "RESTARTING...", 1)
+        qprint("Detected 2 camera devices: " + GPHOTOCAM1 + " and " + GPHOTOCAM2)
+    else:
+        eprint("Number of camera devices does not equal 2. Giving up.")
+        qprint("CAMERAS OFF.")
+        qprint("RESTARTING...")
         sleep(PAUSE)
         restart_program()
 
@@ -112,10 +133,10 @@ def detect_cams():
         RIGHTCAM=cmdoutput("echo " + GPHOTOCAM1 + "|sed -e 's/.*,//g'")
         RIGHTCAMLONG=GPHOTOCAM1
     else:
-        lcd.display(2, "OWNER NAME NOT SET.", 1)
-        lcd.display(3, "RESTARTING...", 1)
+        qprint("OWNER NAME NOT SET.")
+        qprint("RESTARTING...")
         sleep(PAUSE)
-        print GPHOTOCAM1, "owner name is neither set to left or right. Please configure that before continuing."
+        eprint(GPHOTOCAM1 + " owner name is neither set to left or right. Please configure that before continuing.")
         restart_program()
 
     if GPHOTOCAM2ORIENTATION == "left":
@@ -125,184 +146,183 @@ def detect_cams():
         RIGHTCAM=cmdoutput("echo " + GPHOTOCAM2 + "| sed -e 's/.*,//g'")
         RIGHTCAMLONG=GPHOTOCAM2
     else:
-        lcd.display(2, "OWNER NAME NOT SET.", 1)
-        lcd.display(3, "RESTARTING...", 1)
+        qprint("OWNER NAME NOT SET.d")
+        qprint("RESTARTING...")
         sleep(PAUSE)
-        print GPHOTOCAM1, "owner name is neither set to left or right. Please configure that before continuing."
+        eprint(GPHOTOCAM1 + " owner name is neither set to left or right. Please configure that before continuing.")
         restart_program()
 
 def delete_from_cams():
-    lcd.display(3, "deleting from", 1)
-    lcd.display(4, "cameras...", 1)
-    for cam in LEFTCAM, RIGHTCAM:
-        print "deleting existing images from SD card on " + cam
-        cmd = PTPCAM + " --dev=" + cam + " -D; true"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
-        sleep(SHORTPAUSE)
-    lcd.display(4, "", 1)
+    for cam in [LEFTCAM, "left"], [RIGHTCAM, "right"]:
+        bprint("deleting existing images from SD card on " + cam[1])
+        cmdoutput(PTPCAM + " --dev=" + cam[0] + " -D; true")
 
 def switch_to_record_mode():
-    lcd.display(4, "switching mode...", 1)
-    print "Switching cameras to record mode..."
-    print "LEFTCAM is", LEFTCAM, "and RIGHTCAM is", RIGHTCAM
+    qprint("Switching cameras to record mode...")
+    qprint("LEFTCAM is " + LEFTCAM + " and RIGHTCAM is " + RIGHTCAM)
     for cam in LEFTCAM, RIGHTCAM:
-        print "Switching camera", cam, "to record mode and sleeping 1 second..."
-        cmd=PTPCAM + " --dev=" + cam + " --chdk='mode 1' > /dev/null 2>&1 && sleep 1s"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+        qprint("Switching camera " + cam + " to record mode...")
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='mode 1'")
     sleep(PAUSE)
 
 def set_zoom():
-    lcd.display(4, "setting zoom...", 1)
     # TODO: make less naive about zoom setting (check before and after setting, ...)
-    print "Setting zoom..."
+    qprint("Setting zoom...")
     for cam in LEFTCAM, RIGHTCAM:
-        print "Setting camera", cam, "zoom to 3..."
-        lcd.display(4, "setting cam " + cam + " zoom", 1)
+        qprint("Setting camera " + cam + " zoom to 3...")
         # lua set_zoom() makes one camera shut down, looks like, so we're clicking:
-        cmd=PTPCAM + " --dev=" + cam + " --chdk='lua while(get_zoom()<3) do click(\"zoom_in\") end'"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua while(get_zoom()<=3) do click(\"zoom_in\") end'")
         sleep(PAUSE)
-        cmd=PTPCAM + " --dev=" + cam + " --chdk='lua while(get_zoom()>3) do click(\"zoom_out\") end'"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua while(get_zoom()>3) do click(\"zoom_out\") end'")
         sleep(PAUSE)
     sleep(PAUSE)
 
 def flash_off():
-    lcd.display(4, "turning flash off...", 1)
-    print "Switching flash off..."
+    qprint("Switching flash off...")
     for cam in LEFTCAM, RIGHTCAM:
-        cmd=PTPCAM + " --dev=" + cam + " --chdk='lua while(get_flash_mode()<2) do click(\"right\") end'"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua while(get_flash_mode()<2) do click(\"right\") end'")
         sleep(SHORTPAUSE)
 
 def download_from_cams():
-    lcd.display(3, "downloading...", 1)
-    TIMESTAMP=datetime.now().strftime("%Y%m%d%H%M")
+    totalfilesize = 0
+    for pair in [LEFTCAM, "left"], [RIGHTCAM, "right"]:
+        qprint("Calculating images from " + pair[1] + "...")
+        cmd = PTPCAM + " --dev=" + pair[0] + " -L"
+        rawlist = cmdoutput(cmd)
+        filelist = rawlist.strip().split('\n')[3:]
+        filecount = len(filelist)
+        filesize = 0
+        for b in filelist:
+            filesize = filesize + int(b.split()[1])
+        qprint("I see %d images totalling %d megabytes on %s" % (filecount, int(math.ceil(float(filesize) / 1024.0 / 1024.0)), pair[1]))
+        totalfilesize = totalfilesize + filesize
+
+    needfree = int(math.ceil(float(totalfilesize) / 1024.0 / 1024.0))
+    bprint("INSERT USB STICK WITH AT LEAST %d MEGABYTES FREE" % needfree)
+    usbstick = ''
+    while usbstick == '':
+        qprint("checking in five seconds")
+        sleep(5)
+        with contextlib.closing(open('/etc/mtab')) as fp:
+            for m in fp:
+                fs_spec, fs_file, fs_vfstype, fs_mntops, fs_freq, fs_passno = m.split()
+                if fs_spec.startswith('/') and fs_file.startswith('/media'):
+                    try:
+                        r = os.statvfs(fs_file)
+                    except:
+                        eprint("This USB stick seems to be having problems, please try another one")
+                    else:
+                        qprint("Block size: %s, blocks: %s, avail: %s" % (str(r.f_bsize), str(r.f_blocks), str(r.f_bavail)))
+                        block_usage_pct = 0.0
+                        if float(r.f_blocks) > 0:
+                            block_usage_pct = 100.0 - (float(r.f_bavail) / float(r.f_blocks) * 100)
+                        inode_usage_pct = 0.0
+                        if float(r.f_files) > 0:
+                            inode_usage_pct = 100.0 - (float(r.f_favail) / float(r.f_files) * 100)
+                        qprint("%s\t%s\t\t%d%%\t%d%%" % (fs_spec, fs_file, block_usage_pct, inode_usage_pct))
+                        usbfree = int(math.floor(float(r.f_bsize) * float(r.f_bavail) / 1024.0 / 1024.0))
+                        qprint("Megabytes free: %d" % usbfree)
+                        if usbfree < needfree:
+                            eprint("This USB stick doesn't have enough free space, please try another one")
+                        else:
+                            usbstick = fs_file
+    qprint("Mounted USB stick")
+    SCANDIRPREFIX = usbstick
+    TIMESTAMP=datetime.now().strftime("%Y%m%d-%H%M")
+    qprint("Making directory %s/atxhs-bookscan-%s" % (SCANDIRPREFIX, TIMESTAMP))
     # gphoto2 processes end with -1 unexpected result even though everything seems to be fine -> hack: true gives exit status 0
     # ptpcam downloads with bad file creation date and permissions....
     for side in "left", "right":
-        makedirs(SCANDIRPREFIX+TIMESTAMP+"/"+side)
-        chown(SCANDIRPREFIX+TIMESTAMP+"/"+side, 1000, 1000)
-        chmod(SCANDIRPREFIX+TIMESTAMP+"/"+side, 0755)
-    chown(SCANDIRPREFIX+TIMESTAMP, 1000, 1000)
-    chmod(SCANDIRPREFIX+TIMESTAMP, 0755)
+        os.makedirs("%s/atxhs-bookscan-%s/%s" % (SCANDIRPREFIX, TIMESTAMP, side))
+        os.chown("%s/atxhs-bookscan-%s/%s" % (SCANDIRPREFIX, TIMESTAMP, side), 1000, 1000)
+        os.chmod("%s/atxhs-bookscan-%s/%s" % (SCANDIRPREFIX, TIMESTAMP, side), 0755)
+    os.chown("%s/atxhs-bookscan-%s" % (SCANDIRPREFIX, TIMESTAMP), 1000, 1000)
+    os.chmod("%s/atxhs-bookscan-%s" % (SCANDIRPREFIX, TIMESTAMP), 0755)
 
     # previous attempts used gphoto, then ptpcam en masse; then tried listing
     # then downloading one at a time with ptpcam; now back to bulk, but waiting
     # an amount of time proportional to the number of files
     for pair in [LEFTCAM, "left"], [RIGHTCAM, "right"]:
-        print "Downloading images from", pair[0], "..."
-        chdir(SCANDIRPREFIX+TIMESTAMP+"/"+pair[1])
-        cmd = PTPCAM + " --dev=" + pair[0] + " -L | grep 0x | wc -l"
-        numfiles = cmdoutput(cmd)
-        print "I see " + numfiles + " images on " + pair[0]
-        lcd.display(4, numfiles + " files from " + pair[1], 1)
-        cmd = PTPCAM + " --dev=" + pair[0] + " -G ; true"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
-        sleeptime = DLFACTOR * int(numfiles)
-        print "sleeping " + str(sleeptime) + " seconds"
-        sleep(sleeptime)
-    sleep(LONGPAUSE)
+        bprint("Downloading images from " + pair[1] + "...")
+        os.chdir("%s/atxhs-bookscan-%s/%s" % (SCANDIRPREFIX, TIMESTAMP, pair[1]))
+        cmdoutput(PTPCAM + " --dev=" + pair[0] + " -G ; true")
 
-    # timestamp and perms are not set correctly on the files we get from the camera....
+    # timestamp are not set correctly on the files we get from the camera....
     counter = 0
-    for root, dirs, files in walk(SCANDIRPREFIX+TIMESTAMP):
-        for filename in files:
-            thisfile = join(root, filename)
-            utime(thisfile, None)
-            chown(thisfile, 33, 33)
-            chmod(thisfile, 0744)
-            counter += 1
-    print "Adjusted " + str(counter) + " files"
+    qprint("Adjusting timestamps")
+    for side in "left", "right":
+        os.chdir("%s/atxhs-bookscan-%s/%s" % (SCANDIRPREFIX, TIMESTAMP, side))
+        processedFiles = []
+        for fileName in filter(lambda x: x not in processedFiles, glob.glob('*.*')):
+            processedFiles.append(fileName)
+            try:
+                dates, diff = exif_date.fixFileDate(fileName)
+            except Exception, e:
+                qprint(str(e))
+            else:
+                counter += 1
+    qprint("Adjusted " + str(counter) + " files")
+    qprint("syncing filesystems")
+    cmdoutput("sync")
+    bprint("It is now safe to remove your USB stick")
+
 
 def set_iso():
-    lcd.display(4, "setting ISO...", 1)
     for cam in LEFTCAM, RIGHTCAM:
-        print "Setting ISO mode to 1 for camera", cam
-        cmd=PTPCAM + " --dev=" + cam + " --chdk=\"lua set_iso_real(50)\""
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+        qprint("Setting ISO mode to 1 for camera " + cam)
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk=\"lua set_iso_real(50)\"")
         sleep(SHORTPAUSE)
-    lcd.display(4, "", 1)
 
 def set_ndfilter():
-    lcd.display(4, "setting ND filter...", 1)
     for cam in LEFTCAM, RIGHTCAM:
-        print "Disabling neutral density filter for", cam, "-- see http://chdk.wikia.com/wiki/ND_Filter"
-        cmd=PTPCAM + " --dev=" + cam + "--chdk=\"luar set_nd_filter(2)\""
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
+        qprint("Disabling neutral density filter for " + cam + " -- see http://chdk.wikia.com/wiki/ND_Filter")
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk=\"luar set_nd_filter(2)\"")
         sleep(SHORTPAUSE)
-    lcd.display(4, "", 1)
 
 def outer_loop():
-    lcd.clear()
 
     global SHOTS
-    # debounce code from http://www.cl.cam.ac.uk/projects/raspberrypi/tutorials/robot/buttons_and_switches/
-    lcd.display(2, "TURN ON CAMERAS,", 1)
-    lcd.display(3, "TAP PEDAL TO START", 1)
-    print "Starting outer foot pedal loop..."
-    prev_input = 0
-    firstloop = 1
-    # start = time()
+    detect_cams()
     while True:
+        bprint("Press   1   to download photos from cameras")
+        bprint("Press   2   to delete photos from cameras")
+        bprint("Press any other alphanumeric key to take photos")
         try:
-            input = GPIO.input(PIN)
-            if ((not prev_input) and input):
-                if (firstloop != 1):
-                    print("Button pressed")
-                    lcd.display(2, "starting up", 2)
-                    lcd.display(3, "PLEASE WAIT", 2)
-                    detect_cams()
-                    # delete_from cams confuses ptpcam -> do that at the end
-                    switch_to_record_mode()
-                    set_zoom()
-                    flash_off()
-                    set_iso()
-                    set_ndfilter()
-                    SHOTS = 0
-                    inner_loop()
-                    # start = time()
-                    lcd.display(2, "TURN ON CAMERAS,", 1)
-                    lcd.display(3, "TAP PEDAL TO START", 1)
-                    print "Rejoining outer foot pedal loop..."
-                firstloop = 0
-            prev_input = input
-            # slight pause to debounce
-            sleep(DEBOUNCEPAUSE)
+            input = getch()
+            if input == '1':
+                download_from_cams()
+            elif input == '2':
+                delete_from_cams()
+            else:
+                restart_cams()   #because I don't trust you
+                bprint("Turn the cameras on and press any alphanumeric key")
+                getch()
+                detect_cams()
+                switch_to_record_mode()
+                set_zoom()
+                flash_off()
+                set_iso()
+                set_ndfilter()
+                SHOTS = 0
+                inner_loop()
         except KeyboardInterrupt:
-            lcd.clear()
-            lcd.display(2, "GOODBYE", 2)
+            bprint("GOODBYE")
             sleep(PAUSE)
-            lcd.clear()
-            print "Quitting."
+            qprint("Quitting.")
             sys.exit()
-        text = marquee.next()
-        lcd.display(1, text, 1)
 
 def inner_loop():
     global SHOTS
-    lcd.clear()
-
-    lcd.display(2, "", 1)
-    lcd.display(3, "TAP TO SHOOT", 2)
-    lcd.display(4, "ready", 1)
-    print "Starting inner foot pedal loop..."
+    print ""
+    bprint("Press   ESCAPE   to stop taking photos")
+    bprint("Press any other alphanumeric key to take photos")
+    qprint("ready")
     start = time()
-    prev_input = 0
     firstloop = 1
     while True:
-        input = GPIO.input(PIN)
-        if ((not prev_input) and input):
-            if (firstloop != 1):
-                print("Button pressed")
-                shoot()
-                SHOTS += 1
-                lcd.display(2, str(SHOTS / 2), 1)
-                start = time()
-            firstloop = 0
-        prev_input = input
-        #slight pause to debounce
-        sleep(DEBOUNCEPAUSE)
+        input = getch()
+        if (input == '\x1b'):
+            break
 
         # check that a camera hasn't turned off
         # can we do this more quickly?  it's interfering with the pedal.
@@ -311,31 +331,15 @@ def inner_loop():
         #cmdoutput("gphoto2 --auto-detect|grep usb|sed -e 's/.*Camera *//g' | wc -l") == "2" # 0.36 sec
         #cmdoutput("gphoto2 --auto-detect | grep Camera | wc -l") == "2"                     # 0.34 sec, still too long
         if camera_count(BRAND) == 2:                                       # 0.58 sec from command line, faster inside the program? yes!
-            pass
+            shoot()
+            SHOTS += 1
+            qprint(str(SHOTS / 2))
         else:
-            print "Number of camera devices does not equal 2. Try again."
-            for cam in LEFTCAM, RIGHTCAM:
-                cmd=PTPCAM + " --dev=" + cam + " --chdk='lua play_sound(3)'"
-                p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
-            lcd.display(2, "A CAMERA IS OFF.", 1)
-            lcd.display(3, "RESTARTING...", 1)
-            lcd.display(4, "", 1)
-            sleep(PAUSE)
+            eprint("Number of camera devices does not equal 2. Try again.")
+            qprint("A CAMERA IS OFF.")
+            qprint("RESTARTING...")
+            qprint("")
             return
-
-        now = time()
-        if now - start > TMOUT:
-            lcd.display(2, "", 1)
-            lcd.display(3, "TIMEOUT", 2)
-            lcd.display(4, "", 1)
-            print "Foot pedal not pressed for", TMOUT, "seconds."
-            download_from_cams()
-            delete_from_cams()
-            print "Quitting inner loop"
-            return
-        text = marquee.next()
-        lcd.display(1, text, 1)
-
 
 def camera_count(brand):
     counter = 0
@@ -346,18 +350,14 @@ def camera_count(brand):
 
 def shoot():
     global SHOTS
-    lcd.display(3, "WAIT", 2)
-    lcd.display(4, "shooting", 1)
-    print "Shooting with cameras", LEFTCAM, "(left) and ", RIGHTCAM, " (right)"
+    qprint("Shooting with cameras " + LEFTCAM + " (left) and " + RIGHTCAM + " (right)")
     for cam in LEFTCAM, RIGHTCAM:
-        cmd=PTPCAM + " --dev=" + cam + " --chdk='lua " + SHOTPARAMS + "'"
-        p = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
-        sleep(SHORTPAUSE * 2)
-    sleep(SHORTPAUSE * 2) # necessary?
-    lcd.display(4, "ready", 1)
-    lcd.display(3, "TAP TO SHOOT", 2)
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua " + SHOTPARAMS + "'")
+        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='luar shoot()'")
+    qprint("ready")
+    bprint("Press   ESCAPE   to stop taking photos")
+    bprint("Press any other alphanumeric key to take photos")
     SHOTS += 1
 
-main()
-
-
+if __name__ == "__main__":
+    outer_loop()
