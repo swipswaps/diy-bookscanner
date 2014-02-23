@@ -4,7 +4,7 @@ This repo contains, at the moment, the [main script](bookscanner.py) and some ad
 
 Like test_keypedal.sh, this script uses [gphoto](http://www.gphoto.org/) and [a fork of libptp2](https://github.com/jrabbit/libptp-chdk) to communicate with the cameras, in this case a pair of Canon A2200 point-and-shoots.  It also relies on the [Canon Hack Development Kit (CHDK)](http://chdk.wikia.com/), enhanced firmware for selected Canon cameras.  Note that you may (will?) have to compile ptpcam, as the libptp2 you have installed is not likely to include the CHDK code.
 
-Unlike Ben's version, the user interface for this system consists of a standard DVI or HDMI display plugged into the Raspberry Pi for output, and a standard USB keyboard for input.
+Unlike Ben's version, the user interface for this system consists of a standard DVI or HDMI display plugged into the Raspberry Pi for output, and a standard USB keyboard for input.  Files remain on the cameras' SD cards until the user triggers a transfer to a (user-provided) USB stick.
 
 Other details
 -------------
