@@ -87,7 +87,7 @@ def getch():
 def restart_cams():
     qprint("Shutting down cameras to ensure stability...")
     for cam in LEFTCAM, RIGHTCAM:
-        qprint("Shutting down " + cam + "...")
+        #qprint("Shutting down " + cam + "...")
         cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua shut_down()'")
 
 def restart_program():
@@ -108,20 +108,20 @@ def detect_cams():
     if CAMS == 2:
         GPHOTOCAM1 = cmdoutput("gphoto2 --auto-detect|grep usb|sed -e 's/.*Camera *//g'|head -n1")
         GPHOTOCAM2 = cmdoutput("gphoto2 --auto-detect|grep usb|sed -e 's/.*Camera *//g'|tail -n1")
-        qprint(GPHOTOCAM1 + " is gphotocam1")
-        qprint(GPHOTOCAM2 + " is gphotocam2")
+        #qprint(GPHOTOCAM1 + " is gphotocam1")
+        #qprint(GPHOTOCAM2 + " is gphotocam2")
 
         GPHOTOCAM1ORIENTATION=cmdoutput("gphoto2 --port " + GPHOTOCAM1 + " --get-config /main/settings/ownername|grep Current|sed -e's/.*\ //'")
         GPHOTOCAM2ORIENTATION=cmdoutput("gphoto2 --port " + GPHOTOCAM2 + " --get-config /main/settings/ownername|grep Current|sed -e's/.*\ //'")
-        qprint("gphotocam1 orientation is " + GPHOTOCAM1ORIENTATION)
-        qprint("gphotocam2 orientation is " + GPHOTOCAM2ORIENTATION)
+        #qprint("gphotocam1 orientation is " + GPHOTOCAM1ORIENTATION)
+        #qprint("gphotocam2 orientation is " + GPHOTOCAM2ORIENTATION)
 
         CAM1=cmdoutput("echo " + GPHOTOCAM1 + "|sed -e 's/.*,//g'")
         CAM2=cmdoutput("echo " + GPHOTOCAM2 + "|sed -e 's/.*,//g'")
-        qprint("Detected 2 camera devices: " + GPHOTOCAM1 + " and " + GPHOTOCAM2)
+        #qprint("Detected 2 camera devices: " + GPHOTOCAM1 + " and " + GPHOTOCAM2)
     else:
         eprint("Number of camera devices does not equal 2. Giving up.")
-        qprint("CAMERAS OFF.")
+        #qprint("CAMERAS OFF.")
         qprint("RESTARTING...")
         sleep(PAUSE)
         restart_program()
@@ -133,10 +133,10 @@ def detect_cams():
         RIGHTCAM=cmdoutput("echo " + GPHOTOCAM1 + "|sed -e 's/.*,//g'")
         RIGHTCAMLONG=GPHOTOCAM1
     else:
-        qprint("OWNER NAME NOT SET.")
-        qprint("RESTARTING...")
-        sleep(PAUSE)
-        eprint(GPHOTOCAM1 + " owner name is neither set to left or right. Please configure that before continuing.")
+        #qprint("OWNER NAME NOT SET.")
+        #qprint("RESTARTING...")
+        #sleep(PAUSE)
+        eprint(GPHOTOCAM1 + " owner name is neither set to left or right, either through USB error or misconfiguration.")
         restart_program()
 
     if GPHOTOCAM2ORIENTATION == "left":
@@ -146,10 +146,10 @@ def detect_cams():
         RIGHTCAM=cmdoutput("echo " + GPHOTOCAM2 + "| sed -e 's/.*,//g'")
         RIGHTCAMLONG=GPHOTOCAM2
     else:
-        qprint("OWNER NAME NOT SET.d")
-        qprint("RESTARTING...")
-        sleep(PAUSE)
-        eprint(GPHOTOCAM1 + " owner name is neither set to left or right. Please configure that before continuing.")
+        #qprint("OWNER NAME NOT SET.d")
+        #qprint("RESTARTING...")
+        #sleep(PAUSE)
+        eprint(GPHOTOCAM2 + " owner name is neither set to left or right, either through USB error or misconfiguration.")
         restart_program()
 
 def delete_from_cams():
@@ -159,9 +159,9 @@ def delete_from_cams():
 
 def switch_to_record_mode():
     qprint("Switching cameras to record mode...")
-    qprint("LEFTCAM is " + LEFTCAM + " and RIGHTCAM is " + RIGHTCAM)
+    #qprint("LEFTCAM is " + LEFTCAM + " and RIGHTCAM is " + RIGHTCAM)
     for cam in LEFTCAM, RIGHTCAM:
-        qprint("Switching camera " + cam + " to record mode...")
+        #qprint("Switching camera " + cam + " to record mode...")
         cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='mode 1'")
     sleep(PAUSE)
 
@@ -169,7 +169,7 @@ def set_zoom():
     # TODO: make less naive about zoom setting (check before and after setting, ...)
     qprint("Setting zoom...")
     for cam in LEFTCAM, RIGHTCAM:
-        qprint("Setting camera " + cam + " zoom to 3...")
+        #qprint("Setting camera " + cam + " zoom to 3...")
         # lua set_zoom() makes one camera shut down, looks like, so we're clicking:
         cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua while(get_zoom()<=3) do click(\"zoom_in\") end'")
         sleep(PAUSE)
@@ -268,14 +268,16 @@ def download_from_cams():
 
 
 def set_iso():
+    qprint("Setting ISO mode to 1...")
     for cam in LEFTCAM, RIGHTCAM:
-        qprint("Setting ISO mode to 1 for camera " + cam)
+        #qprint("Setting ISO mode to 1 for camera " + cam)
         cmdoutput(PTPCAM + " --dev=" + cam + " --chdk=\"lua set_iso_real(50)\"")
         sleep(SHORTPAUSE)
 
 def set_ndfilter():
+    qprint("Disabling neutral density filter...")
     for cam in LEFTCAM, RIGHTCAM:
-        qprint("Disabling neutral density filter for " + cam + " -- see http://chdk.wikia.com/wiki/ND_Filter")
+        #qprint("Disabling neutral density filter for " + cam + " -- see http://chdk.wikia.com/wiki/ND_Filter")
         cmdoutput(PTPCAM + " --dev=" + cam + " --chdk=\"luar set_nd_filter(2)\"")
         sleep(SHORTPAUSE)
 
@@ -307,8 +309,8 @@ def outer_loop():
                 inner_loop()
         except KeyboardInterrupt:
             bprint("GOODBYE")
-            sleep(PAUSE)
-            qprint("Quitting.")
+            #sleep(PAUSE)
+            #qprint("Quitting.")
             sys.exit()
 
 def inner_loop():
@@ -316,7 +318,7 @@ def inner_loop():
     print ""
     bprint("Press   ESCAPE   to stop taking photos")
     bprint("Press any other alphanumeric key to take photos")
-    qprint("ready")
+    #qprint("ready")
     start = time()
     firstloop = 1
     while True:
@@ -332,11 +334,11 @@ def inner_loop():
         #cmdoutput("gphoto2 --auto-detect | grep Camera | wc -l") == "2"                     # 0.34 sec, still too long
         if camera_count(BRAND) == 2:                                       # 0.58 sec from command line, faster inside the program? yes!
             shoot()
-            SHOTS += 1
-            qprint(str(SHOTS / 2))
+            #SHOTS += 1
+            #qprint(str(SHOTS / 2))
         else:
             eprint("Number of camera devices does not equal 2. Try again.")
-            qprint("A CAMERA IS OFF.")
+            #qprint("A CAMERA IS OFF.")
             qprint("RESTARTING...")
             qprint("")
             return
@@ -350,14 +352,18 @@ def camera_count(brand):
 
 def shoot():
     global SHOTS
-    qprint("Shooting with cameras " + LEFTCAM + " (left) and " + RIGHTCAM + " (right)")
+    #qprint("Shooting with cameras " + LEFTCAM + " (left) and " + RIGHTCAM + " (right)")
     for cam in LEFTCAM, RIGHTCAM:
         cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='lua " + SHOTPARAMS + "'")
-        cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='luar shoot()'")
-    qprint("ready")
+        brokeshot = cmdoutput(PTPCAM + " --dev=" + cam + " --chdk='luar shoot()'")
+        if brokeshot[-2] != "0":
+            eprint("%s camera failed, starting over" % ("left" if cam==LEFTCAM else "right"))
+            restart_program()
+    #qprint("ready")
+    SHOTS += 1
+    qprint(str(SHOTS))
     bprint("Press   ESCAPE   to stop taking photos")
     bprint("Press any other alphanumeric key to take photos")
-    SHOTS += 1
 
 if __name__ == "__main__":
     outer_loop()
