@@ -13,7 +13,13 @@ The triggering script, bookscanner.py, is part of a larger system, including
 * an init script, so that bookscanner.py will run as a daemon on boot
 * a network connection (ethernet or wireless) to set dates and times correctly
 
-Because the Raspberry Pi only has two USB ports, this system uses a powered USB hub: the user's USB stick (to download photos to) is plugged directly into one USB port on the Pi itself, and the keyboard and two cameras are plugged into the powered hub.  (We experienced a lot of problems with the USB stick being plugged into the hub.)
+A wired ethernet connection is recommended over a USB wifi adapter.
+
+When using an original Raspberry Pi (which has only two USB ports) use a powered USB hub: the user's USB stick (to download photos to) is plugged directly into one USB port on the Pi itself, and the keyboard and two cameras are plugged into the powered hub.  (We experienced a lot of problems with the USB stick being plugged into the hub.)
+
+When using a Raspberry Pi B+ or Model 2 B+ (four USB ports), the USB hub is not necessary; plug the two cameras, keyboard, and user's USB stick directly into the Pi.
+
+We provided a USB extension cable for users to plug their USB stick into.
 
 Post-processing
 ---------------
